@@ -1910,7 +1910,11 @@ function renderCarritoTree(){
   filas.forEach(fila => { (porGrupo[fila.grupo] = porGrupo[fila.grupo] || []).push(fila); });
   const gruposOrdenados = Object.keys(porGrupo).sort();
 
-  tree.innerHTML = gruposOrdenados.map(grupo => {
+  const encabezadoGlobal = `<div style="display:flex; justify-content:flex-end; padding:0 0 8px;">
+    <button class="btn-reeleccion" id="carritoAgregarTodoVisibleBtn" style="font-size:11.5px; padding:4px 10px;">+ Agregar todo lo visible (${filas.length})</button>
+  </div>`;
+
+  tree.innerHTML = encabezadoGlobal + gruposOrdenados.map(grupo => {
     const items = porGrupo[grupo].sort((a,b) => a.etiqueta.localeCompare(b.etiqueta));
     const filasHtml = items.map(item => {
       const yaEnCarrito = carrito.some(c => c.id === item.id);
@@ -1927,13 +1931,15 @@ function renderCarritoTree(){
         <span class="reeleccion-region-toggle">+</span>
         <span>${grupo}</span>
         <span class="reeleccion-region-count">${items.length}</span>
+        <button class="btn-reeleccion" data-carrito-grupo="${grupo}" style="margin-left:8px; padding:2px 8px; font-size:10.5px;">+ Agregar todos</button>
       </div>
       <div class="reeleccion-comuna-list" id="reeleccion-list-carrito_${grupo.replace(/\s+/g,'_')}">${filasHtml}</div>
     </div>`;
   }).join('');
 
   tree.querySelectorAll('.reeleccion-region-header').forEach(header => {
-    header.addEventListener('click', () => {
+    header.addEventListener('click', (e) => {
+      if(e.target.dataset.carritoGrupo) return; // el click en "agregar todos" no debe abrir/cerrar el grupo
       const rid = header.dataset.rid;
       const list = document.getElementById('reeleccion-list-' + rid);
       const toggle = header.querySelector('.reeleccion-region-toggle');
@@ -1941,6 +1947,32 @@ function renderCarritoTree(){
       toggle.textContent = isOpen ? '−' : '+';
     });
   });
+
+  function agregarItemsAlCarrito(items){
+    let agregados = 0;
+    items.forEach(item => {
+      if(!carrito.some(c => c.id === item.id)){
+        carrito.push({ id: item.id, categoria: `${carritoNivel}_${carritoModo}`, nivel: carritoNivel, modo: carritoModo, datos: item.datos });
+        agregados++;
+      }
+    });
+    if(agregados > 0){
+      actualizarContadorCarrito();
+      renderCarritoTree();
+    }
+  }
+
+  tree.querySelectorAll('button[data-carrito-grupo]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      agregarItemsAlCarrito(porGrupo[btn.dataset.carritoGrupo]);
+    });
+  });
+
+  const btnTodoVisible = document.getElementById('carritoAgregarTodoVisibleBtn');
+  if(btnTodoVisible){
+    btnTodoVisible.addEventListener('click', () => agregarItemsAlCarrito(filas));
+  }
 
   tree.querySelectorAll('button[data-carrito-id]').forEach(btn => {
     btn.addEventListener('click', (e) => {
