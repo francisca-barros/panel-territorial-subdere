@@ -356,6 +356,16 @@
         <button data-nivel="senador">Senadores</button>
         <button data-nivel="delegado" style="display:none;">Delegados</button>
       </div>
+      <div class="seg" id="carritoAñoAlcaldeSeg" style="margin:8px 20px 4px; display:none;">
+        <button data-año="2021">2021</button>
+        <button data-año="2024" class="active">2024</button>
+      </div>
+      <div class="seg" id="carritoAñoCongresoSeg" style="margin:8px 20px 4px; display:none;">
+        <button data-año="2013">2013</button>
+        <button data-año="2017">2017</button>
+        <button data-año="2021">2021</button>
+        <button data-año="2025" class="active">2025</button>
+      </div>
       <div id="carritoTree" class="reeleccion-tree" style="max-height:40vh;"></div>
       <div style="padding:10px 20px; border-top:1px solid var(--line); display:flex; align-items:center; gap:10px;">
         <span id="carritoResumen" style="font-size:12.5px; color:var(--ink-soft); flex:1;">0 items en el carrito</span>
@@ -378,6 +388,16 @@
       <div class="seg" id="reeleccionVistaSeg" style="margin:8px 20px 0;">
         <button data-vista="agrupada" class="active">Agrupada</button>
         <button data-vista="plana">Lista completa</button>
+      </div>
+      <div class="seg" id="reeleccionLadoSeg" style="margin:8px 20px 0;">
+        <button data-ladofiltro="todos" class="active">Todos los colores</button>
+        <button data-ladofiltro="IZQ">Izquierda</button>
+        <button data-ladofiltro="DER">Derecha</button>
+        <button data-ladofiltro="IND">Independiente</button>
+      </div>
+      <div class="seg" id="reeleccionAgrupacionSeg" style="margin:8px 20px 0; display:none;">
+        <button data-agrupacion="territorio" class="active">Por distrito/circunscripción</button>
+        <button data-agrupacion="region">Por región</button>
       </div>
       <div id="reeleccionTree" class="reeleccion-tree"></div>
     </div>
@@ -602,6 +622,7 @@ async function cargarDatos() {
     const porComunaAño = {}; // codigo_comuna -> año -> [candidatos, uno por fila, tal como viene de esa comuna]
     // territorio -> año -> nombre_normalizado -> {nombre, partido, votos (sumados entre comunas), electo}
     const acumTerritorioAño = {};
+    const regionPorTerritorio = {}; // territorio -> nombre de región (para poder agrupar por región)
     rows.forEach(r => {
       const comunaKey = r.codigo_comuna;
       if(comunaKey){
@@ -610,6 +631,7 @@ async function cargarDatos() {
         porComunaAño[comunaKey][r.anio].push(r);
       }
       const terr = r[campoTerritorio];
+      if(!regionPorTerritorio[terr] && r.region) regionPorTerritorio[terr] = r.region;
       if(!acumTerritorioAño[terr]) acumTerritorioAño[terr] = {};
       if(!acumTerritorioAño[terr][r.anio]) acumTerritorioAño[terr][r.anio] = {};
       const key = normComunaKey(r.nombre);
@@ -632,7 +654,7 @@ async function cargarDatos() {
     Object.values(porTerritorioAño).forEach(porAño => {
       Object.values(porAño).forEach(lista => lista.sort((a,b) => b.votos - a.votos));
     });
-    return { porComunaAño, porTerritorioAño };
+    return { porComunaAño, porTerritorioAño, regionPorTerritorio };
   }
 
   const DIPUTADOS = procesarCongreso(diputadosRows, 'distrito');
@@ -1530,11 +1552,18 @@ renderSideEmpty();
 // ===== Filtro de reelección 2028 =====
 let reeleccionEstado = 'si';
 let reeleccionVista = 'agrupada';
+let reeleccionLadoFiltro = 'todos';
+let reeleccionAgrupacion = 'territorio';
 
 function comunaColorLado(p){
   const al = p.alcalde_2024;
   const lado = al ? al[state.lado] : null;
   return lado ? COLOR_HEX[lado] : COLOR_HEX.NULL;
+}
+
+function pasaFiltroLado(ladoCodigo){
+  if(reeleccionLadoFiltro === 'todos') return true;
+  return ladoCodigo === reeleccionLadoFiltro;
 }
 
 function renderReeleccionTree(){
@@ -1545,6 +1574,9 @@ function renderReeleccionTree(){
     const r = p.reeleccion_2028;
     if(!r || r.estado_confianza === 'tbd') return;
     if(r.puede_repostular !== (reeleccionEstado === 'si')) return;
+    const al = p.alcalde_2024;
+    const ladoCodigo = al ? al[state.lado] : null;
+    if(!pasaFiltroLado(ladoCodigo)) return;
     comunasFiltradas.push(p);
   });
 
@@ -1631,10 +1663,62 @@ function renderReeleccionTree(){
   });
 }
 
+function renderReeleccionGobernadorTree(){
+  const tree = document.getElementById('reeleccionTree');
+  const regionesFiltradas = [];
+  const vistos = new Set();
+  COMUNAS_GEO.features.forEach(f => {
+    const p = f.properties;
+    if(vistos.has(p.codigo_region)) return;
+    const r = p.gobernador_reeleccion_2028;
+    if(!r) return;
+    if(r.puede_repostular !== (reeleccionEstado === 'si')) return;
+    const gob = p.gobernador_2024;
+    const ladoCodigo = gob ? gob[state.lado] : null;
+    if(!pasaFiltroLado(ladoCodigo)) return;
+    vistos.add(p.codigo_region);
+    regionesFiltradas.push(p);
+  });
+
+  if(regionesFiltradas.length === 0){
+    tree.innerHTML = '<div class="reeleccion-empty">No hay regiones en esta categoría.</div>';
+    return;
+  }
+
+  const ordenadas = regionesFiltradas.sort((a,b) => a.region.localeCompare(b.region));
+  tree.innerHTML = ordenadas.map(p => {
+    const gob = p.gobernador_2024;
+    const lado = gob ? gob[state.lado] : null;
+    const colorHex = lado ? COLOR_HEX[lado] : COLOR_HEX.NULL;
+    return `<div class="reeleccion-comuna-row" data-codigo-region="${p.codigo_region}">
+      <span class="reeleccion-comuna-dot" style="background:${colorHex}"></span>
+      <span class="reeleccion-comuna-name">${p.region}</span>
+      <span class="reeleccion-comuna-alcalde">— ${gob ? titleCase(gob.nombre) : 'Sin dato'}</span>
+    </div>`;
+  }).join('');
+
+  tree.querySelectorAll('.reeleccion-comuna-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const rid = row.dataset.codigoRegion;
+      document.getElementById('reeleccionOverlay').style.display = 'none';
+      state.activeRegion = rid;
+      state.view = 'regiones';
+      state.selectedCommune = null;
+      renderMap();
+      renderSideRegion(rid);
+    });
+  });
+}
+
 function renderReeleccionCongresoTree(){
   const tree = document.getElementById('reeleccionTree');
   const datosReeleccion = CONGRESO_REELECCION[state.nivel] || {};
-  const filtradas = Object.values(datosReeleccion).filter(r => r.puede_repostular === (reeleccionEstado === 'si'));
+  const datosCandidatos = datosCongresoActivos();
+  const filtradas = Object.values(datosReeleccion).filter(r => {
+    if(r.puede_repostular !== (reeleccionEstado === 'si')) return false;
+    const lado = ladoDePartido(personasPartido(r, r.territorio));
+    return pasaFiltroLado(lado);
+  });
 
   if(filtradas.length === 0){
     tree.innerHTML = '<div class="reeleccion-empty">No hay personas en esta categoría.</div>';
@@ -1662,36 +1746,43 @@ function renderReeleccionCongresoTree(){
     return;
   }
 
-  const porTerritorio = {};
-  filtradas.forEach(r => { (porTerritorio[r.territorio] = porTerritorio[r.territorio] || []).push(r); });
+  const porGrupo = {};
+  const grupoParaTerritorio = (terr) => reeleccionAgrupacion === 'region'
+    ? (datosCandidatos.regionPorTerritorio[terr] || 'Sin región')
+    : terr;
+  filtradas.forEach(r => {
+    const grupo = grupoParaTerritorio(r.territorio);
+    (porGrupo[grupo] = porGrupo[grupo] || []).push(r);
+  });
 
-  const territoriosOrdenados = Object.keys(porTerritorio).sort();
+  const gruposOrdenados = Object.keys(porGrupo).sort();
 
-  tree.innerHTML = territoriosOrdenados.map(terr => {
-    const personas = porTerritorio[terr].sort((a,b) => a.nombre.localeCompare(b.nombre));
+  tree.innerHTML = gruposOrdenados.map(grupo => {
+    const personas = porGrupo[grupo].sort((a,b) => a.nombre.localeCompare(b.nombre));
     const filas = personas.map(r => {
-      const color = ladoDePartido(personasPartido(r, terr)) ;
+      const color = ladoDePartido(personasPartido(r, r.territorio));
       const colorHex = color ? COLOR_HEX[color] : COLOR_HEX.NULL;
-      return `<div class="reeleccion-comuna-row" data-territorio="${terr}">
+      const subtitulo = reeleccionAgrupacion === 'region' ? `${r.territorio} · ${r.periodos_consecutivos}º período` : `${r.periodos_consecutivos}º período`;
+      return `<div class="reeleccion-comuna-row" data-territorio="${r.territorio}">
         <span class="reeleccion-comuna-dot" style="background:${colorHex}"></span>
         <span class="reeleccion-comuna-name">${titleCase(r.nombre)}</span>
-        <span class="reeleccion-comuna-alcalde">— ${r.periodos_consecutivos}º período</span>
+        <span class="reeleccion-comuna-alcalde">— ${subtitulo}</span>
       </div>`;
     }).join('');
     return `<div class="reeleccion-region">
-      <div class="reeleccion-region-header" data-rid="${terr}">
+      <div class="reeleccion-region-header" data-rid="${grupo.replace(/\s+/g,'_')}">
         <span class="reeleccion-region-toggle">+</span>
-        <span>${terr}</span>
+        <span>${grupo}</span>
         <span class="reeleccion-region-count">${personas.length}</span>
       </div>
-      <div class="reeleccion-comuna-list" id="reeleccion-list-${terr.replace(/\s+/g,'_')}">${filas}</div>
+      <div class="reeleccion-comuna-list" id="reeleccion-list-${grupo.replace(/\s+/g,'_')}">${filas}</div>
     </div>`;
   }).join('');
 
   tree.querySelectorAll('.reeleccion-region-header').forEach(header => {
     header.addEventListener('click', () => {
       const rid = header.dataset.rid;
-      const list = document.getElementById('reeleccion-list-' + rid.replace(/\s+/g,'_'));
+      const list = document.getElementById('reeleccion-list-' + rid);
       const toggle = header.querySelector('.reeleccion-region-toggle');
       const isOpen = list.classList.toggle('open');
       toggle.textContent = isOpen ? '−' : '+';
@@ -1720,6 +1811,8 @@ document.getElementById('reeleccionBtn').addEventListener('click', () => {
   const titulo = document.getElementById('reeleccionModalTitle');
   if(NIVELES_CONGRESO.has(state.nivel)){
     titulo.textContent = `Reelección de ${state.nivel === 'diputado' ? 'diputados' : 'senadores'}`;
+  } else if(state.nivel === 'gobernador'){
+    titulo.textContent = 'Reelección de gobernadores regionales 2028';
   } else {
     titulo.textContent = 'Reelección de alcaldes 2028';
   }
@@ -1767,6 +1860,8 @@ document.getElementById('reeleccionOverlay').addEventListener('click', (e) => {
 let carrito = [];
 let carritoModo = 'proximas';
 let carritoNivel = 'alcalde';
+let carritoAñoAlcalde = '2024';
+let carritoAñoCongreso = '2025';
 
 function actualizarContadorCarrito(){
   document.getElementById('carritoContador').textContent = carrito.length;
@@ -1783,14 +1878,15 @@ function obtenerFilasCarrito(nivel, modo){
   const filas = []; // {grupo, id, etiqueta, detalle, datos}
 
   if(nivel === 'alcalde' && modo === 'pasadas'){
+    const año = carritoAñoAlcalde;
     COMUNAS_GEO.features.forEach(f => {
       const p = f.properties;
-      const al = p['alcalde_' + state.year];
+      const al = p['alcalde_' + año];
       if(!al) return;
       filas.push({
-        grupo: p.region, id: `alc_${p.codigo_comuna}_${state.year}`, etiqueta: p.comuna,
+        grupo: p.region, id: `alc_${p.codigo_comuna}_${año}`, etiqueta: p.comuna,
         detalle: `${titleCase(al.nombre)} · ${al.partido || 'S/D'}${al.pct != null ? ' · ' + al.pct.toFixed(2) + '%' : ''}`,
-        datos: { Comuna: p.comuna, Región: p.region, Año: state.year, Nombre: titleCase(al.nombre), Partido: al.partido, '% Votos': al.pct, Votos: al.votos }
+        datos: { Comuna: p.comuna, Región: p.region, Año: año, Nombre: titleCase(al.nombre), Partido: al.partido, '% Votos': al.pct, Votos: al.votos }
       });
     });
   }
@@ -1811,17 +1907,18 @@ function obtenerFilasCarrito(nivel, modo){
   }
 
   if(nivel === 'gobernador' && modo === 'pasadas'){
+    const año = carritoAñoAlcalde;
     const vistos = new Set();
     COMUNAS_GEO.features.forEach(f => {
       const p = f.properties;
       if(vistos.has(p.codigo_region)) return;
-      const gob = p['gobernador_' + state.year];
+      const gob = p['gobernador_' + año];
       if(!gob) return;
       vistos.add(p.codigo_region);
       filas.push({
-        grupo: p.region, id: `gob_${p.codigo_region}_${state.year}`, etiqueta: p.region,
+        grupo: p.region, id: `gob_${p.codigo_region}_${año}`, etiqueta: p.region,
         detalle: `${titleCase(gob.nombre)} · ${gob.partido || 'S/D'}${gob.pct != null ? ' · ' + gob.pct.toFixed(2) + '%' : ''}`,
-        datos: { Región: p.region, Año: state.year, Nombre: titleCase(gob.nombre), Partido: gob.partido, '% Votos': gob.pct, Votos: gob.votos }
+        datos: { Región: p.region, Año: año, Nombre: titleCase(gob.nombre), Partido: gob.partido, '% Votos': gob.pct, Votos: gob.votos }
       });
     });
   }
@@ -1844,15 +1941,18 @@ function obtenerFilasCarrito(nivel, modo){
   }
 
   if((nivel === 'diputado' || nivel === 'senador') && modo === 'pasadas'){
+    const año = carritoAñoCongreso;
     const datos = nivel === 'diputado' ? DIPUTADOS : SENADORES;
     const campoTerr = nivel === 'diputado' ? 'Distrito' : 'Circunscripción';
     Object.keys(datos.porTerritorioAño).forEach(terr => {
-      const lista = (datos.porTerritorioAño[terr] || {})[state.congresoAño] || [];
+      const lista = (datos.porTerritorioAño[terr] || {})[año] || [];
+      const totalTerritorio = lista.reduce((s,c) => s + c.votos, 0);
       lista.filter(c => c.electo).forEach(c => {
+        const pct = totalTerritorio ? (c.votos / totalTerritorio * 100) : null;
         filas.push({
-          grupo: terr, id: `${nivel}_${terr}_${state.congresoAño}_${normComunaKey(c.nombre)}`, etiqueta: titleCase(c.nombre),
-          detalle: `${c.partido || 'S/D'} · ${c.votos.toLocaleString('es-CL')} votos`,
-          datos: { [campoTerr]: terr, Año: state.congresoAño, Nombre: titleCase(c.nombre), Partido: c.partido, Votos: c.votos }
+          grupo: terr, id: `${nivel}_${terr}_${año}_${normComunaKey(c.nombre)}`, etiqueta: titleCase(c.nombre),
+          detalle: `${c.partido || 'S/D'} · ${pct != null ? pct.toFixed(2) + '% · ' : ''}${c.votos.toLocaleString('es-CL')} votos`,
+          datos: { [campoTerr]: terr, Año: año, Nombre: titleCase(c.nombre), Partido: c.partido, '% Votos': pct != null ? Number(pct.toFixed(2)) : null, Votos: c.votos }
         });
       });
     });
@@ -1860,10 +1960,14 @@ function obtenerFilasCarrito(nivel, modo){
 
   if(nivel === 'diputado' && modo === 'proximas'){
     Object.values(CONGRESO_REELECCION['diputado'] || {}).forEach(r => {
+      const lista = (DIPUTADOS.porTerritorioAño[r.territorio] || {})['2025'] || [];
+      const totalTerritorio = lista.reduce((s,c) => s + c.votos, 0);
+      const candidato = lista.find(c => normComunaKey(c.nombre) === normComunaKey(r.nombre));
+      const pct = (totalTerritorio && candidato) ? (candidato.votos / totalTerritorio * 100) : null;
       filas.push({
         grupo: r.territorio, id: `diputadoprox_${r.territorio}_${normComunaKey(r.nombre)}`, etiqueta: titleCase(r.nombre),
         detalle: `${r.periodos_consecutivos}º período · ${r.puede_repostular ? 'Sí puede' : 'No puede'} (2029)`,
-        datos: { Distrito: r.territorio, Nombre: titleCase(r.nombre), 'Períodos consecutivos': r.periodos_consecutivos, '¿Puede repostular 2029?': r.puede_repostular ? 'Sí' : 'No', 'Confianza del dato': r.confianza_dato }
+        datos: { Distrito: r.territorio, Nombre: titleCase(r.nombre), '% Votos (2025)': pct != null ? Number(pct.toFixed(2)) : null, 'Períodos consecutivos': r.periodos_consecutivos, '¿Puede repostular 2029?': r.puede_repostular ? 'Sí' : 'No', 'Confianza del dato': r.confianza_dato }
       });
     });
   }
@@ -1871,10 +1975,15 @@ function obtenerFilasCarrito(nivel, modo){
   if(nivel === 'senador' && modo === 'proximas'){
     Object.values(CONGRESO_REELECCION['senador'] || {}).forEach(r => {
       const proxima = proximaEleccionSenador(r.territorio);
+      const añoBase = proxima === 2029 ? '2021' : '2025';
+      const lista = (SENADORES.porTerritorioAño[r.territorio] || {})[añoBase] || [];
+      const totalTerritorio = lista.reduce((s,c) => s + c.votos, 0);
+      const candidato = lista.find(c => normComunaKey(c.nombre) === normComunaKey(r.nombre));
+      const pct = (totalTerritorio && candidato) ? (candidato.votos / totalTerritorio * 100) : null;
       filas.push({
         grupo: r.territorio, id: `senadorprox_${r.territorio}_${normComunaKey(r.nombre)}`, etiqueta: titleCase(r.nombre),
         detalle: `${r.periodos_consecutivos}º período · ${r.puede_repostular ? 'Sí puede' : 'No puede'} (${proxima})`,
-        datos: { Circunscripción: r.territorio, Nombre: titleCase(r.nombre), 'Períodos consecutivos': r.periodos_consecutivos, 'Próxima elección': proxima, [`¿Puede repostular ${proxima}?`]: r.puede_repostular ? 'Sí' : 'No', 'Confianza del dato': r.confianza_dato }
+        datos: { Circunscripción: r.territorio, Nombre: titleCase(r.nombre), [`% Votos (${añoBase})`]: pct != null ? Number(pct.toFixed(2)) : null, 'Períodos consecutivos': r.periodos_consecutivos, 'Próxima elección': proxima, [`¿Puede repostular ${proxima}?`]: r.puede_repostular ? 'Sí' : 'No', 'Confianza del dato': r.confianza_dato }
       });
     });
   }
@@ -1999,6 +2108,7 @@ const NOMBRE_CATEGORIA_HOJA = {
 
 document.getElementById('carritoBtn').addEventListener('click', () => {
   document.getElementById('carritoOverlay').style.display = 'flex';
+  actualizarVisibilidadAñoCarrito();
   renderCarritoTree();
 });
 document.getElementById('carritoCloseBtn').addEventListener('click', () => {
@@ -2007,6 +2117,13 @@ document.getElementById('carritoCloseBtn').addEventListener('click', () => {
 document.getElementById('carritoOverlay').addEventListener('click', (e) => {
   if(e.target.id === 'carritoOverlay') document.getElementById('carritoOverlay').style.display = 'none';
 });
+function actualizarVisibilidadAñoCarrito(){
+  const esAlcaldeGob = (carritoNivel === 'alcalde' || carritoNivel === 'gobernador');
+  const esCongreso = (carritoNivel === 'diputado' || carritoNivel === 'senador');
+  document.getElementById('carritoAñoAlcaldeSeg').style.display = (carritoModo === 'pasadas' && esAlcaldeGob) ? 'flex' : 'none';
+  document.getElementById('carritoAñoCongresoSeg').style.display = (carritoModo === 'pasadas' && esCongreso) ? 'flex' : 'none';
+}
+
 document.querySelectorAll('#carritoModoSeg button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('#carritoModoSeg button').forEach(b => b.classList.remove('active'));
@@ -2018,6 +2135,7 @@ document.querySelectorAll('#carritoModoSeg button').forEach(btn => {
       carritoNivel = 'alcalde';
       document.querySelectorAll('#carritoNivelSeg button').forEach(b => b.classList.toggle('active', b.dataset.nivel === 'alcalde'));
     }
+    actualizarVisibilidadAñoCarrito();
     renderCarritoTree();
   });
 });
@@ -2026,6 +2144,23 @@ document.querySelectorAll('#carritoNivelSeg button').forEach(btn => {
     document.querySelectorAll('#carritoNivelSeg button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     carritoNivel = btn.dataset.nivel;
+    actualizarVisibilidadAñoCarrito();
+    renderCarritoTree();
+  });
+});
+document.querySelectorAll('#carritoAñoAlcaldeSeg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#carritoAñoAlcaldeSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    carritoAñoAlcalde = btn.dataset.año;
+    renderCarritoTree();
+  });
+});
+document.querySelectorAll('#carritoAñoCongresoSeg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#carritoAñoCongresoSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    carritoAñoCongreso = btn.dataset.año;
     renderCarritoTree();
   });
 });
@@ -2048,8 +2183,21 @@ document.getElementById('carritoDescargarBtn').addEventListener('click', () => {
 });
 
 function renderReeleccionActual(){
-  if(NIVELES_CONGRESO.has(state.nivel)) renderReeleccionCongresoTree();
-  else renderReeleccionTree();
+  const agrupacionSeg = document.getElementById('reeleccionAgrupacionSeg');
+  const vistaSeg = document.getElementById('reeleccionVistaSeg');
+  if(NIVELES_CONGRESO.has(state.nivel)){
+    agrupacionSeg.style.display = 'flex';
+    vistaSeg.style.display = 'flex';
+    renderReeleccionCongresoTree();
+  } else if(state.nivel === 'gobernador'){
+    agrupacionSeg.style.display = 'none';
+    vistaSeg.style.display = 'none';
+    renderReeleccionGobernadorTree();
+  } else {
+    agrupacionSeg.style.display = 'none';
+    vistaSeg.style.display = 'flex';
+    renderReeleccionTree();
+  }
 }
 
 document.querySelectorAll('#reeleccionSeg button').forEach(btn => {
@@ -2066,6 +2214,22 @@ document.querySelectorAll('#reeleccionVistaSeg button').forEach(btn => {
     document.querySelectorAll('#reeleccionVistaSeg button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     reeleccionVista = btn.dataset.vista;
+    renderReeleccionActual();
+  });
+});
+document.querySelectorAll('#reeleccionLadoSeg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#reeleccionLadoSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    reeleccionLadoFiltro = btn.dataset.ladofiltro;
+    renderReeleccionActual();
+  });
+});
+document.querySelectorAll('#reeleccionAgrupacionSeg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#reeleccionAgrupacionSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    reeleccionAgrupacion = btn.dataset.agrupacion;
     renderReeleccionActual();
   });
 });
